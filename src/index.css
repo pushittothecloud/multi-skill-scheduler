@@ -1,0 +1,105 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --page-bg: #f1f3f4;
+  --panel-bg: #ffffff;
+  --panel-alt: #f8f9fa;
+  --panel-soft: #eef3fd;
+  --outside-hours-bg: #f3f4f6;
+  --outside-hours-border: #e5e7eb;
+  --outside-hours-text: #6b7280;
+  --border: #dadce0;
+  --text: #202124;
+  --muted: #5f6368;
+  --accent: #1a73e8;
+  --accent-strong: #174ea6;
+  --accent-soft: #e8f0fe;
+  --shadow: rgba(60, 64, 67, 0.12);
+  --radius: 18px;
+  font-family: 'Inter', 'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: var(--text);
+  background: var(--page-bg);
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  min-height: 100%;
+  min-height: 100vh;
+}
+
+body {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8f9fa 0%, #eef3f9 100%);
+  color: var(--text);
+}
+
+button, input, select {
+  font: inherit;
+  border-radius: 12px;
+}
+
+.font-handwritten {
+  font-family: 'Inter', 'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-shadow: none;
+  transform: none;
+  font-style: normal;
+}
+
+.notebook-surface {
+  background-color: var(--panel-bg);
+  border-color: var(--border);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.1), 0 8px 24px rgba(60, 64, 67, 0.04);
+  background-image: none;
+}
+
+input, select {
+  font-family: 'Inter', 'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: 0;
+}
+
+.calendar-slot,
+.calendar-booking-button {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.calendar-slot:hover,
+.calendar-booking-button:hover {
+  transform: none;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.calendar-slot--off-hours,
+.calendar-slot--off-hours:hover,
+.calendar-slot--off-hours:active {
+  transform: none;
+  box-shadow: none;
+  transition: none;
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+
+.calendar-slot:active,
+.calendar-booking-button:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 8px rgba(15, 23, 42, 0.1);
+}
+
+::selection {
+  background: rgba(26, 115, 232, 0.18);
+}
