@@ -44,6 +44,7 @@ export interface Technician {
 export interface Booking {
   id: string;
   customerName: string;
+  customerAddress?: string;
   serviceType: ServiceType;
   date: string;
   startTime: string;
@@ -66,7 +67,18 @@ export type ScreenTab = 'settings' | 'calendar' | 'booking';
 //   The UI wants both a visual green/red state and a human-readable reason. This lets the user
 //   audit whether a slot was blocked by skill coverage, lunch breaks, or existing bookings.
 export interface SlotStatus {
-  time: string;
+  startTime: string;
+  endTime: string;
   status: 'Available' | 'Unavailable' | 'OutsideHours';
   auditExplanation: string;
+  isBreakException?: boolean;
+}
+
+export interface TechnicianAssignmentSuggestion {
+  technicianId: string;
+  technicianName: string;
+  score: number;
+  projectedLoad: number;
+  clusterSummary: string;
+  reasons: string[];
 }

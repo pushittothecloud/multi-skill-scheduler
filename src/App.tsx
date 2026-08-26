@@ -68,11 +68,6 @@ function AppShell() {
         </main>
       </div>
 
-      <div className="fixed bottom-4 right-4 z-20 rounded-[18px] border border-[#dfe3e8] bg-white/90 p-3 shadow-[0_12px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
-        <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-white">
-          <PlumbingVariant />
-        </div>
-      </div>
     </div>
   );
 }

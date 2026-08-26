@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { formatClockTime, useScheduler } from '../useScheduler';
-import type { ServiceType, SlotStatus, Technician } from '../types';
+import type { Booking, ServiceType, SlotStatus } from '../types';
 
 const serviceOptions: ServiceType[] = ['Plumbing', 'HVAC', 'Electrical', 'Drains', 'Roofing'];
 
@@ -85,22 +85,36 @@ const overlaps = (startA: string, endA: string, startB: string, endB: string): b
   return toMinutes(startA) < toMinutes(endB) && toMinutes(startB) < toMinutes(endA);
 };
 
+const addMinutesToTime = (time: string, deltaMinutes: number): string => {
+  const [hours, minutes] = time.split(':').map(Number);
+  const totalMinutes = hours * 60 + minutes + deltaMinutes;
+  const normalizedMinutes = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const nextHours = Math.floor(normalizedMinutes / 60);
+  const nextMinutes = normalizedMinutes % 60;
+  return `${String(nextHours).padStart(2, '0')}:${String(nextMinutes).padStart(2, '0')}`;
+};
+
+const toSimpleSlotReason = (slot: SlotStatus): string => {
+  return slot.auditExplanation;
+};
+
 export default function CustomerBooking() {
   const {
-    bookings,
     selectedDate,
     selectedService,
     getSlotsForService,
-    getTechniciansForService,
+    getAssignmentSuggestions,
     addBooking,
     setSelectedDate,
     setSelectedService,
   } = useScheduler();
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
   const [customerName, setCustomerName] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [bookedAppointment, setBookedAppointment] = useState<{
     customerName: string;
+    customerAddress: string;
     serviceType: ServiceType;
     date: string;
     startTime: string;
@@ -109,9 +123,11 @@ export default function CustomerBooking() {
   } | null>(null);
   const [expandedSections, setExpandedSections] = useState({ service: true, appointment: false });
   const [hasChosenService, setHasChosenService] = useState(false);
+  const [activeSlotTooltip, setActiveSlotTooltip] = useState<string | null>(null);
 
   const buildGoogleCalendarUrl = (appointment: {
     customerName: string;
+    customerAddress: string;
     serviceType: ServiceType;
     date: string;
     startTime: string;
@@ -130,8 +146,8 @@ export default function CustomerBooking() {
       action: 'TEMPLATE',
       text: `${appointment.customerName} - ${appointment.serviceType} service`,
       dates: `${formatGoogleDate(startDate)}/${formatGoogleDate(endDate)}`,
-      details: `Service: ${appointment.serviceType}\nTechnician: ${appointment.technicianName}\nCustomer: ${appointment.customerName}`,
-      location: 'Home service appointment',
+      details: `Service: ${appointment.serviceType}\nTechnician: ${appointment.technicianName}\nCustomer: ${appointment.customerName}\nAddress: ${appointment.customerAddress}`,
+      location: appointment.customerAddress,
     });
 
     return `https://calendar.google.com/calendar/render?${params.toString()}`;
@@ -148,7 +164,8 @@ export default function CustomerBooking() {
     const sections: Array<{
       date: string;
       label: string;
-      availableSlots: Array<{ time: string; status: 'Available'; auditExplanation: string }>;
+      availableCount: number;
+      slots: SlotStatus[];
     }> = [];
     let totalVisibleSlots = 0;
     const baseDate = new Date(`${selectedDate}T00:00:00`);
@@ -157,26 +174,23 @@ export default function CustomerBooking() {
       const nextDate = new Date(baseDate);
       nextDate.setDate(baseDate.getDate() + index);
       const dateValue = toDateOnly(nextDate);
-      const daySlots = getSlotsForService(dateValue, selectedService).filter(
-        (slot): slot is { time: string; status: 'Available'; auditExplanation: string } => slot.status === 'Available',
-      );
+      const daySlots = getSlotsForService(dateValue, selectedService);
+      const availableCount = daySlots.filter((slot) => slot.status === 'Available').length;
 
-      if (daySlots.length === 0) {
+      if (availableCount === 0 && index !== 0) {
         continue;
       }
-
-      const remainingCapacity = 5 - totalVisibleSlots;
-      const nextDaySlots = remainingCapacity <= 0 ? [] : daySlots.slice(0, remainingCapacity);
 
       sections.push({
         date: dateValue,
         label: new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }),
-        availableSlots: nextDaySlots,
+        availableCount,
+        slots: daySlots,
       });
 
-      totalVisibleSlots += nextDaySlots.length;
+      totalVisibleSlots += availableCount;
 
-      if (totalVisibleSlots >= 5) {
+      if (totalVisibleSlots >= 5 && index !== 0) {
         break;
       }
     }
@@ -190,44 +204,30 @@ export default function CustomerBooking() {
   );
 
   const slots = useMemo(() => getSlotsForService(selectedDate, selectedService), [getSlotsForService, selectedDate, selectedService]);
-  const certifiedTechnicians = useMemo(
-    () => getTechniciansForService(selectedService, selectedDate),
-    [getTechniciansForService, selectedDate, selectedService],
-  );
-
-  const technicianForSelectedSlot = useMemo<Technician | null>(() => {
-    if (!selectedTime) {
-      return null;
+  const assignmentSuggestionsForSelectedSlot = useMemo(() => {
+    if (!selectedSlot) {
+      return [];
     }
 
-    const [startHour] = selectedTime.split(':').map(Number);
-    const start = selectedTime;
-    const end = `${String(startHour + 1).padStart(2, '0')}:00`;
+    if (selectedSlot.date !== selectedDate) {
+      return [];
+    }
 
-    return (
-      certifiedTechnicians.find((technician) => {
-        const shift = technician.shifts.find((block) => block.dayOfWeek === new Date(`${selectedDate}T00:00:00`).getDay());
-        if (!shift) {
-          return false;
-        }
+    const candidateBooking: Booking = {
+      id: 'preview-booking',
+      customerName: customerName.trim() || 'Pending customer',
+      customerAddress: customerAddress.trim(),
+      serviceType: selectedService,
+      date: selectedSlot.date,
+      startTime: selectedSlot.startTime,
+      endTime: selectedSlot.endTime,
+      technicianId: null,
+    };
 
-        if (start < shift.startTime || end > shift.endTime) {
-          return false;
-        }
+    return getAssignmentSuggestions(candidateBooking);
+  }, [customerAddress, customerName, getAssignmentSuggestions, selectedDate, selectedService, selectedSlot]);
 
-        if (shift.breaks.some((block) => overlaps(start, end, block.startTime, block.endTime))) {
-          return false;
-        }
-
-        return !bookings.some(
-          (booking) =>
-            booking.date === selectedDate &&
-            booking.technicianId === technician.id &&
-            overlaps(booking.startTime, booking.endTime, start, end),
-        );
-      }) ?? null
-    );
-  }, [bookings, certifiedTechnicians, selectedDate, selectedTime]);
+  const technicianForSelectedSlot = assignmentSuggestionsForSelectedSlot[0] ?? null;
 
   const toggleSection = (section: 'service' | 'appointment') => {
     setExpandedSections((current) => ({ ...current, [section]: !current[section] }));
@@ -257,7 +257,7 @@ export default function CustomerBooking() {
   };
 
   const handleBookAppointment = () => {
-    if (!selectedTime) {
+    if (!selectedSlot) {
       setStatus({ type: 'error', message: 'Please choose an available appointment time first.' });
       return;
     }
@@ -267,31 +267,35 @@ export default function CustomerBooking() {
       return;
     }
 
+    if (!customerAddress.trim()) {
+      setStatus({ type: 'error', message: 'Please enter your address before confirming the booking.' });
+      return;
+    }
+
     if (!technicianForSelectedSlot) {
       setStatus({ type: 'error', message: 'That slot is no longer available. Please choose another time.' });
       return;
     }
 
-    const [startHour] = selectedTime.split(':').map(Number);
-    const endTime = `${String(startHour + 1).padStart(2, '0')}:00`;
-
     addBooking({
       id: `booking-${Date.now()}`,
       customerName: customerName.trim(),
+      customerAddress: customerAddress.trim(),
       serviceType: selectedService,
-      date: selectedDate,
-      startTime: selectedTime,
-      endTime,
-      technicianId: technicianForSelectedSlot.id,
+      date: selectedSlot.date,
+      startTime: selectedSlot.startTime,
+      endTime: selectedSlot.endTime,
+      technicianId: technicianForSelectedSlot.technicianId,
     });
 
     const appointment = {
       customerName: customerName.trim(),
+      customerAddress: customerAddress.trim(),
       serviceType: selectedService,
-      date: selectedDate,
-      startTime: selectedTime,
-      endTime,
-      technicianName: technicianForSelectedSlot.name,
+      date: selectedSlot.date,
+      startTime: selectedSlot.startTime,
+      endTime: selectedSlot.endTime,
+      technicianName: technicianForSelectedSlot.technicianName,
     };
 
     setBookedAppointment(appointment);
@@ -300,7 +304,8 @@ export default function CustomerBooking() {
       message: `${appointment.customerName} is booked for ${appointment.serviceType} on ${appointment.date} at ${formatClockTime(appointment.startTime)} with ${appointment.technicianName}.`,
     });
     setCustomerName('');
-    setSelectedTime(null);
+    setCustomerAddress('');
+    setSelectedSlot(null);
   };
 
   return (
@@ -337,7 +342,7 @@ export default function CustomerBooking() {
                           type="button"
                           onClick={() => {
                             setSelectedService(service);
-                            setSelectedTime(null);
+                            setSelectedSlot(null);
                             setStatus(null);
                             setHasChosenService(true);
                             setExpandedSections({ service: true, appointment: true });
@@ -385,7 +390,7 @@ export default function CustomerBooking() {
                   <div className="px-5 pb-5 pt-1">
                     <div className="space-y-3">
                       {appointmentTimeSections.length > 0 ? (
-                        appointmentTimeSections.map(({ date, label, availableSlots }) => {
+                        appointmentTimeSections.map(({ date, label, availableCount, slots: daySlots }) => {
                           const isSelected = selectedDate === date;
                           const weekdayLabel = new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' });
 
@@ -400,7 +405,7 @@ export default function CustomerBooking() {
                                 type="button"
                                 onClick={() => {
                                   setSelectedDate(date);
-                                  setSelectedTime(null);
+                                  setSelectedSlot(null);
                                   setStatus(null);
                                 }}
                                 className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition text-slate-700 hover:bg-sky-50/60"
@@ -410,40 +415,101 @@ export default function CustomerBooking() {
                                   <div className="text-xs text-slate-500">{label}</div>
                                 </div>
                                 <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                                  {availableSlots.length} open
+                                  {availableCount} open
                                 </span>
                               </button>
 
                               {isSelected && (
                                 <div className="border-t border-slate-200 px-3 pb-3 pt-3">
                                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                                    {availableSlots.map((slot) => {
-                                      const formattedTime = formatClockTime(slot.time);
-                                      const isSelectedTime = selectedTime === slot.time;
+                                    {daySlots.map((slot) => {
+                                      const formattedTime = `${formatClockTime(slot.startTime)} - ${formatClockTime(slot.endTime)}`;
+                                      const isSelectedTime =
+                                        selectedSlot?.date === date &&
+                                        selectedSlot.startTime === slot.startTime &&
+                                        selectedSlot.endTime === slot.endTime;
+                                      const isAvailable = slot.status === 'Available';
+                                      const simpleReason = toSimpleSlotReason(slot);
+                                      const tooltipKey = `${date}-${slot.startTime}-${slot.endTime}`;
+                                      const isTooltipOpen = activeSlotTooltip === tooltipKey;
 
                                       return (
-                                        <button
-                                          key={`${date}-${slot.time}`}
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedDate(date);
-                                            setSelectedTime(slot.time);
-                                            setStatus(null);
-                                          }}
-                                          className={`rounded-[var(--radius)] border px-3 py-2 text-left text-base transition ${
-                                            isSelectedTime
-                                              ? 'border-sky-600 bg-sky-600 text-white'
-                                              : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700'
-                                          }`}
-                                        >
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span>{formattedTime}</span>
-                                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                                          </div>
-                                        </button>
+                                        <div key={tooltipKey} className="group relative">
+                                          <button
+                                            type="button"
+                                            title={simpleReason}
+                                            onClick={() => {
+                                              if (!isAvailable) {
+                                                setActiveSlotTooltip((current) => (current === tooltipKey ? null : tooltipKey));
+                                                return;
+                                              }
+
+                                              setSelectedDate(date);
+                                              setSelectedSlot({ date, startTime: slot.startTime, endTime: slot.endTime });
+                                              setStatus(null);
+                                              setActiveSlotTooltip(null);
+                                            }}
+                                            onMouseEnter={() => {
+                                              if (!isAvailable) {
+                                                setActiveSlotTooltip(tooltipKey);
+                                              }
+                                            }}
+                                            onMouseLeave={() => {
+                                              if (!isAvailable) {
+                                                setActiveSlotTooltip((current) => (current === tooltipKey ? null : current));
+                                              }
+                                            }}
+                                            onFocus={() => {
+                                              if (!isAvailable) {
+                                                setActiveSlotTooltip(tooltipKey);
+                                              }
+                                            }}
+                                            onBlur={() => {
+                                              if (!isAvailable) {
+                                                setActiveSlotTooltip((current) => (current === tooltipKey ? null : current));
+                                              }
+                                            }}
+                                            aria-disabled={!isAvailable}
+                                            aria-describedby={!isAvailable && isTooltipOpen ? `${tooltipKey}-reason` : undefined}
+                                            className={`w-full rounded-[var(--radius)] border px-3 py-2 text-left text-base transition ${
+                                              isAvailable
+                                                ? isSelectedTime
+                                                  ? 'border-sky-600 bg-sky-600 text-white'
+                                                  : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700'
+                                                : 'border-slate-200 bg-slate-100 text-slate-500 hover:border-slate-300 hover:bg-slate-100'
+                                            }`}
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span>{formattedTime}</span>
+                                              {isAvailable ? (
+                                                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                                              ) : (
+                                                <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+                                              )}
+                                            </div>
+                                            <div className={`mt-1 text-xs ${isAvailable ? 'text-current/80' : 'text-slate-500'}`}>
+                                              {isAvailable ? 'Available' : 'Unavailable'}
+                                            </div>
+                                          </button>
+
+                                          {!isAvailable && (
+                                            <div
+                                              id={`${tooltipKey}-reason`}
+                                              role="tooltip"
+                                              className={`pointer-events-none absolute left-0 right-0 z-10 mt-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 shadow-md transition ${
+                                                isTooltipOpen ? 'opacity-100' : 'opacity-0'
+                                              }`}
+                                            >
+                                              {simpleReason}
+                                            </div>
+                                          )}
+                                        </div>
                                       );
                                     })}
                                   </div>
+                                  <p className="mt-3 text-xs text-slate-500">
+                                    Unavailable times can be tapped or hovered to see why they are blocked.
+                                  </p>
                                 </div>
                               )}
                             </div>
@@ -493,22 +559,26 @@ export default function CustomerBooking() {
             </div>
           )}
 
-          {selectedTime && technicianForSelectedSlot && (
+          {selectedSlot && technicianForSelectedSlot && selectedSlot.date === selectedDate && (
             <div className="border-t border-[#edf2f7] bg-white px-5 py-4">
               <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4 shadow-sm">
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Selected</p>
                     <p className="mt-2 text-lg font-semibold text-slate-800">
-                      {formatClockTime(selectedTime)} - {formatClockTime(`${String(Number.parseInt(selectedTime.slice(0, 2), 10) + 1).padStart(2, '0')}:00`)}
+                      {formatClockTime(selectedSlot.startTime)} - {formatClockTime(selectedSlot.endTime)}
                     </p>
                   </div>
                   <div className="flex justify-end">
                     <div className={`rounded-full border px-2.5 py-1 text-xs font-medium ${skillMeta[selectedService].className}`}>
-                      Technician: {technicianForSelectedSlot.name}
+                      Technician: {technicianForSelectedSlot.technicianName}
                     </div>
                   </div>
                 </div>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Assignment algorithm: {technicianForSelectedSlot.clusterSummary} · score {technicianForSelectedSlot.score.toFixed(1)}
+                </p>
 
                 <label htmlFor="customer-name" className="mt-4 block text-sm font-medium text-slate-700">
                   Your name
@@ -520,6 +590,21 @@ export default function CustomerBooking() {
                       value={customerName}
                       onChange={(event) => setCustomerName(event.target.value)}
                       placeholder="Enter your name"
+                      className="w-full rounded-[var(--radius)] border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-sky-400"
+                    />
+                  </div>
+                </label>
+
+                <label htmlFor="customer-address" className="mt-3 block text-sm font-medium text-slate-700">
+                  Service address
+                  <div className="relative mt-2">
+                    <House className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden="true" />
+                    <input
+                      id="customer-address"
+                      type="text"
+                      value={customerAddress}
+                      onChange={(event) => setCustomerAddress(event.target.value)}
+                      placeholder="Enter your address"
                       className="w-full rounded-[var(--radius)] border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-sky-400"
                     />
                   </div>

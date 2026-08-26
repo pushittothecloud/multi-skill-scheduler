@@ -100,6 +100,25 @@ input, select {
   box-shadow: 0 4px 8px rgba(15, 23, 42, 0.1);
 }
 
+@keyframes unassigned-clickable-pulse {
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 0 rgba(26, 115, 232, 0);
+  }
+
+  50% {
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 3px rgba(26, 115, 232, 0.2);
+  }
+}
+
+.calendar-booking-button[data-unassigned-clickable='true'] {
+  cursor: pointer;
+}
+
+.calendar-booking-button[data-unassigned-clickable='true']:hover {
+  animation: unassigned-clickable-pulse 1.8s ease-in-out infinite;
+}
+
 ::selection {
   background: rgba(26, 115, 232, 0.18);
 }

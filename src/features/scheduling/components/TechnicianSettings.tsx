@@ -15,6 +15,7 @@ import type { ServiceType, ShiftBlock, Technician } from '../types';
 
 const serviceOptions: ServiceType[] = ['Plumbing', 'HVAC', 'Electrical', 'Drains', 'Roofing'];
 const dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const defaultWorkingDays = [1, 2, 3, 4, 5];
 
 const PipeElbowIcon = (props: ComponentProps<'svg'>) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -79,17 +80,21 @@ const timeToMinutes = (value: string): number => {
   return hours * 60 + minutes;
 };
 
-const emptyShift = {
-  dayOfWeek: 1,
-  startTime: '08:00',
+const buildDefaultShiftForDay = (dayOfWeek: number): ShiftBlock => ({
+  dayOfWeek,
+  startTime: '09:00',
   endTime: '17:00',
   breaks: [{ startTime: '12:00', endTime: '13:00' }],
   working: true,
-};
+});
+
+const buildDefaultWeekdayShifts = (): ShiftBlock[] => defaultWorkingDays.map((dayOfWeek) => buildDefaultShiftForDay(dayOfWeek));
+
+const emptyShift = buildDefaultShiftForDay(1);
 
 const buildShiftDraft = (shift?: Partial<ShiftBlock>, dayOfWeek = 1): ShiftBlock => ({
   dayOfWeek,
-  startTime: shift?.startTime ?? '08:00',
+  startTime: shift?.startTime ?? '09:00',
   endTime: shift?.endTime ?? '17:00',
   breaks: shift?.breaks ?? [{ startTime: '12:00', endTime: '13:00' }],
   working: shift?.working ?? true,
@@ -122,11 +127,13 @@ export default function TechnicianSettings() {
   const [selectedId, setSelectedId] = useState<string>(technicians[0]?.id ?? '');
   const [draftName, setDraftName] = useState(technicians[0]?.name ?? '');
   const [selectedSkills, setSelectedSkills] = useState<ServiceType[]>(technicians[0]?.skills ?? []);
-  const [selectedDays, setSelectedDays] = useState<number[]>(technicians[0]?.shifts.map((shift) => shift.dayOfWeek) ?? [1]);
+  const [selectedDays, setSelectedDays] = useState<number[]>(
+    technicians[0]?.shifts.map((shift) => shift.dayOfWeek) ?? defaultWorkingDays,
+  );
   const [selectedShiftDay, setSelectedShiftDay] = useState<number>(technicians[0]?.shifts[0]?.dayOfWeek ?? 1);
   const [dayShiftDrafts, setDayShiftDrafts] = useState<Record<number, ShiftBlock>>(() => {
-    const initialShift = technicians[0]?.shifts[0] ?? emptyShift;
-    return { [initialShift.dayOfWeek]: buildShiftDraft(initialShift, initialShift.dayOfWeek) };
+    const initialShifts = technicians[0]?.shifts ?? buildDefaultWeekdayShifts();
+    return Object.fromEntries(initialShifts.map((shift) => [shift.dayOfWeek, buildShiftDraft(shift, shift.dayOfWeek)]));
   });
   const [isEditing, setIsEditing] = useState(false);
 
@@ -148,13 +155,12 @@ export default function TechnicianSettings() {
       return;
     }
 
-    const nextDays = next.shifts.length > 0 ? next.shifts.map((shift) => shift.dayOfWeek) : [1];
+    const nextDays = next.shifts.length > 0 ? next.shifts.map((shift) => shift.dayOfWeek) : defaultWorkingDays;
     const calendarDayOfWeek = new Date(`${selectedDate}T00:00:00`).getDay();
     const preferredDay = nextDays.includes(calendarDayOfWeek) ? calendarDayOfWeek : nextDays[0] ?? 1;
+    const draftShifts = next.shifts.length > 0 ? next.shifts : buildDefaultWeekdayShifts();
     const nextDrafts = Object.fromEntries(
-      next.shifts.length > 0
-        ? next.shifts.map((shift) => [shift.dayOfWeek, buildShiftDraft(shift, shift.dayOfWeek)])
-        : [[1, buildShiftDraft(undefined, 1)]],
+      draftShifts.map((shift) => [shift.dayOfWeek, buildShiftDraft(shift, shift.dayOfWeek)]),
     );
 
     setSelectedId(next.id);
@@ -313,7 +319,7 @@ export default function TechnicianSettings() {
       id: `tech-${Date.now()}`,
       name: `New Technician ${technicians.length + 1}`,
       skills: ['HVAC'],
-      shifts: [emptyShift],
+      shifts: buildDefaultWeekdayShifts(),
     };
 
     addTechnician(nextTechnician);
@@ -348,9 +354,11 @@ export default function TechnicianSettings() {
     setSelectedId('');
     setDraftName('');
     setSelectedSkills([]);
-    setSelectedDays([1]);
+    setSelectedDays(defaultWorkingDays);
     setSelectedShiftDay(1);
-    setDayShiftDrafts({ 1: buildShiftDraft(undefined, 1) });
+    setDayShiftDrafts(
+      Object.fromEntries(defaultWorkingDays.map((dayOfWeek) => [dayOfWeek, buildShiftDraft(undefined, dayOfWeek)])),
+    );
   };
 
   return (
